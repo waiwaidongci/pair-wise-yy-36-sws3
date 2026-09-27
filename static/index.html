@@ -1,1 +1,59 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>企业排污许可与超标处置</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;color:#17212b}pre{background:#f4f7f9;padding:1rem;overflow:auto}button{padding:.55rem 1rem}</style></head><body><h1>企业排污许可与超标处置</h1><p>汇总监测和工况，判断排放超标并跟踪复测、整改、执法与复查</p><p>按浓度与许可限值计算超标倍数，异常读数先进入评估；关闭前必须没有未完成整改项。</p><button onclick="loadItems()">刷新列表</button><pre id="out">使用X-Actor和X-Role请求头调用接口。</pre><script>async function loadItems(){const r=await fetch('/api/items',{headers:{'X-Actor':'demo','X-Role':'viewer'}});document.getElementById('out').textContent=JSON.stringify(await r.json(),null,2)}</script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>企业排污许可与超标处置</title><style>
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;color:#17212b}
+pre{background:#f4f7f9;padding:1rem;overflow:auto}
+button{padding:.45rem .9rem;margin:.15rem}
+input,select{padding:.35rem;margin:.15rem}
+section{border:1px solid #dde4ea;border-radius:8px;padding:1rem;margin:1rem 0}
+table{border-collapse:collapse;width:100%;margin:.5rem 0}
+td,th{border:1px solid #dde4ea;padding:.35rem .5rem;text-align:left;font-size:.9rem}
+label{display:inline-block;margin:.2rem .8rem .2rem 0}
+.blockers{color:#b3261e}.ok{color:#1a7f37}
+</style></head><body>
+<h1>企业排污许可与超标处置</h1>
+<p>复查交接：合规员登记检查日期、承办人和现场结论；暂缓须填复检日期与原因，同一事件只保留一笔待办检查；发现新的超标问题退回整改并按最新浓度重算优先级与期限；主任须在最近检查完成、问题全部关闭后归档，否则列出阻塞项。</p>
+<section><h2>身份</h2>
+<label>账号 <input id="actor" value="demo"></label>
+<label>角色 <select id="role"><option value="operator">operator</option><option value="compliance_officer" selected>compliance_officer</option><option value="director">director</option><option value="viewer">viewer</option></select></label>
+</section>
+<section><h2>新建事件</h2>
+<label>标题 <input id="cTitle"></label><label>描述 <input id="cDesc"></label>
+<label>级别 <select id="cSeverity"><option>normal</option><option>watch</option><option selected>exceedance</option><option>major</option></select></label>
+<label>浓度 <input id="cQty" type="number" step="any" value="12"></label>
+<label>限值 <input id="cThr" type="number" step="any" value="6"></label>
+<button onclick="createItem()">创建</button>
+</section>
+<section><h2>事件列表</h2><button onclick="loadItems()">刷新列表</button><div id="items"></div></section>
+<section id="detailSec" style="display:none"><h2>事件详情</h2>
+<div id="detail"></div>
+<h3>状态流转</h3>
+<select id="targetState"><option>assessing</option><option>remediation</option><option>inspection</option></select>
+<button onclick="doTransition()">流转</button>
+<h3>检查单</h3><div id="inspections"></div>
+<h3>登记现场检查（合规员）</h3>
+<label>检查日期 <input type="date" id="inspDate"></label>
+<label>承办人 <input id="inspector"></label>
+<label>现场结论 <select id="conclusion" onchange="toggleConclusion()"><option value="passed">passed 通过</option><option value="deferred">deferred 暂缓</option><option value="exceeded">exceeded 发现新超标</option></select></label>
+<span id="deferFields" style="display:none"><label>复检日期 <input type="date" id="recheckDate"></label><label>暂缓原因 <input id="deferReason"></label></span>
+<span id="exceedFields" style="display:none"><label>最新浓度 <input id="latestQuantity" type="number" step="any"></label></span>
+<button onclick="registerInspection()">登记检查</button>
+<h3>归档（主任）</h3><div id="blockers"></div>
+<button onclick="closeItem()">归档结案</button>
+</section>
+<pre id="out"></pre>
+<script>
+let current=null;
+const $=id=>document.getElementById(id);
+function hdrs(){return{'Content-Type':'application/json','X-Actor':$('actor').value,'X-Role':$('role').value}}
+function show(x){$('out').textContent=typeof x==='string'?x:JSON.stringify(x,null,2)}
+async function api(path,opts){const r=await fetch(path,Object.assign({headers:hdrs()},opts||{}));const j=await r.json().catch(()=>({}));if(!r.ok)throw j;return j}
+async function createItem(){try{show(await api('/api/items',{method:'POST',body:JSON.stringify({title:$('cTitle').value,description:$('cDesc').value,severity:$('cSeverity').value,quantity:parseFloat($('cQty').value),threshold:parseFloat($('cThr').value)})}));await loadItems()}catch(e){show(e)}}
+async function loadItems(){try{const j=await api('/api/items');$('items').innerHTML='<table><tr><th>ID</th><th>标题</th><th>状态</th><th>优先级</th><th>期限</th><th></th></tr>'+j.items.map(i=>`<tr><td>${i.id}</td><td>${i.title}</td><td>${i.status}</td><td>${i.priority}</td><td>${i.deadline_hours}h</td><td><button onclick="selectItem(${i.id})">详情</button></td></tr>`).join('')+'</table>'}catch(e){show(e)}}
+async function selectItem(id){try{current=await api('/api/items/'+id);renderDetail();await loadInspections(id);$('detailSec').style.display='block'}catch(e){show(e)}}
+function renderDetail(){const i=current;$('detail').innerHTML=`<p><b>#${i.id} ${i.title}</b> 状态:${i.status} 版本:${i.version} 浓度:${i.quantity}/${i.threshold} 优先级:${i.priority} 期限:${i.deadline_hours}h</p>`;const b=i.closure_blockers||[];$('blockers').innerHTML=b.length?'<p class="blockers">暂不能归档，阻塞项：</p><ul class="blockers">'+b.map(x=>`<li>${x}</li>`).join('')+'</ul>':'<p class="ok">可以归档：最近检查已完成，问题全部关闭。</p>'}
+async function loadInspections(id){const j=await api(`/api/items/${id}/inspections`);$('inspections').innerHTML=j.inspections.length?'<table><tr><th>ID</th><th>检查日期</th><th>承办人</th><th>结论</th><th>状态</th><th>复检日期</th><th>暂缓原因</th><th>最新浓度</th><th></th></tr>'+j.inspections.map(x=>`<tr><td>${x.id}</td><td>${x.inspection_date}</td><td>${x.inspector}</td><td>${x.conclusion}</td><td>${x.status}</td><td>${x.recheck_date||''}</td><td>${x.defer_reason||''}</td><td>${x.latest_quantity??''}</td><td>${x.status==='pending'?`<button onclick="completeInspection(${x.id})">复检登记</button>`:''}</td></tr>`).join('')+'</table>':'<p>尚无检查单。</p>'}
+function toggleConclusion(){const c=$('conclusion').value;$('deferFields').style.display=c==='deferred'?'inline':'none';$('exceedFields').style.display=c==='exceeded'?'inline':'none'}
+async function registerInspection(){if(!current)return;const c=$('conclusion').value;const body={inspection_date:$('inspDate').value,inspector:$('inspector').value,conclusion:c};if(c==='deferred'){body.recheck_date=$('recheckDate').value;body.defer_reason=$('deferReason').value}if(c==='exceeded'){body.latest_quantity=parseFloat($('latestQuantity').value)}try{show(await api(`/api/items/${current.id}/inspections`,{method:'POST',body:JSON.stringify(body)}));await selectItem(current.id)}catch(e){show(e)}}
+async function completeInspection(inspId){const c=prompt('复检结论（passed/exceeded）','passed');if(!c)return;const body={conclusion:c};if(c==='exceeded'){const q=prompt('最新浓度');if(q===null)return;body.latest_quantity=parseFloat(q)}try{show(await api(`/api/items/${current.id}/inspections/${inspId}/complete`,{method:'POST',body:JSON.stringify(body)}));await selectItem(current.id)}catch(e){show(e)}}
+async function doTransition(){if(!current)return;try{show(await api(`/api/items/${current.id}/transition`,{method:'POST',body:JSON.stringify({target:$('targetState').value,expected_version:current.version})}));await selectItem(current.id)}catch(e){show(e)}}
+async function closeItem(){if(!current)return;try{show(await api(`/api/items/${current.id}/transition`,{method:'POST',body:JSON.stringify({target:'closed',expected_version:current.version})}));await selectItem(current.id)}catch(e){show(e)}}
+</script></body></html>

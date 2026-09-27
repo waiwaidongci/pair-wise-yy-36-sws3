@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, Optional
 class ErrorKind:
     VALIDATION="validation"; NOT_FOUND="not_found"; FORBIDDEN="forbidden"; CONFLICT="conflict"
@@ -11,12 +12,16 @@ class NotFoundError(DomainError): kind=ErrorKind.NOT_FOUND
 class PermissionDenied(DomainError): kind=ErrorKind.FORBIDDEN
 class ConflictError(DomainError): kind=ErrorKind.CONFLICT
 SEVERITIES=['normal', 'watch', 'exceedance', 'major']; STATES=['reported', 'assessing', 'remediation', 'inspection', 'closed']; ROLES=['operator', 'compliance_officer', 'director', 'viewer']
+INSPECTION_CONCLUSIONS=['passed', 'deferred', 'exceeded']; INSPECTION_STATUSES=['pending', 'completed']
 @dataclass(frozen=True)
 class Item:
     id:int; title:str; description:str; severity:str; quantity:float; threshold:float; status:str; version:int; external_ref:Optional[str]; created_by:str; created_at:str; updated_at:str
 @dataclass(frozen=True)
 class Record:
     id:int; item_id:int; kind:str; detail:str; status:str; external_ref:Optional[str]; created_by:str; created_at:str
+@dataclass(frozen=True)
+class Inspection:
+    id:int; item_id:int; inspection_date:str; inspector:str; conclusion:str; status:str; recheck_date:Optional[str]; defer_reason:Optional[str]; latest_quantity:Optional[float]; created_by:str; created_at:str; updated_at:str
 @dataclass(frozen=True)
 class AuditEntry:
     id:int; action:str; entity_type:str; entity_id:int; actor:str; detail:Dict[str,Any]; previous_hash:str; entry_hash:str; created_at:str
@@ -27,6 +32,14 @@ def require_text(value,field,max_length=2000):
     return value
 def normalize_severity(value):
     if value not in SEVERITIES: raise ValidationError("severity不在允许范围内")
+    return value
+def normalize_conclusion(value):
+    if value not in INSPECTION_CONCLUSIONS: raise ValidationError("conclusion不在允许范围内")
+    return value
+def require_date(value,field):
+    value=require_text(value,field,40)
+    try: datetime.strptime(value,"%Y-%m-%d")
+    except ValueError: raise ValidationError(f"{field}必须是YYYY-MM-DD格式的日期")
     return value
 def require_number(value,field,minimum=0.0):
     if isinstance(value,bool): raise ValidationError(f"{field}必须是数字")
