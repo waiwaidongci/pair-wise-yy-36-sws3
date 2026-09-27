@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, Optional
 class ErrorKind:
     VALIDATION="validation"; NOT_FOUND="not_found"; FORBIDDEN="forbidden"; CONFLICT="conflict"
@@ -18,6 +19,9 @@ class Item:
 class Record:
     id:int; item_id:int; kind:str; detail:str; status:str; external_ref:Optional[str]; created_by:str; created_at:str
 @dataclass(frozen=True)
+class Inspection:
+    id:int; item_id:int; inspection_date:str; handler:str; status:str; conclusion:Optional[str]; recheck_date:Optional[str]; defer_reason:Optional[str]; new_quantity:Optional[float]; created_by:str; created_at:str; updated_at:str
+@dataclass(frozen=True)
 class AuditEntry:
     id:int; action:str; entity_type:str; entity_id:int; actor:str; detail:Dict[str,Any]; previous_hash:str; entry_hash:str; created_at:str
 def require_text(value,field,max_length=2000):
@@ -25,6 +29,11 @@ def require_text(value,field,max_length=2000):
     value=value.strip()
     if len(value)>max_length: raise ValidationError(f"{field}不能超过{max_length}个字符")
     return value
+def require_date(value,field):
+    text=require_text(value,field,10)
+    try: datetime.strptime(text,"%Y-%m-%d")
+    except ValueError: raise ValidationError(f"{field}必须是YYYY-MM-DD格式")
+    return text
 def normalize_severity(value):
     if value not in SEVERITIES: raise ValidationError("severity不在允许范围内")
     return value

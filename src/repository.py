@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from .audit import make_entry, utc_now
 from .domain import ConflictError, NotFoundError
-from .rules import ID_PREFIX, STATES
+from .rules import ID_PREFIX, INSPECTION_STATUSES, STATES
 
 
 class Repository:
@@ -24,6 +24,7 @@ class Repository:
 
     def _create_schema(self) -> None:
         statuses = ",".join("'" + s.replace("'", "''") + "'" for s in STATES)
+        inspection_statuses = ",".join("'" + s.replace("'", "''") + "'" for s in INSPECTION_STATUSES)
         with self.conn:
             self.conn.executescript(f"""
                 CREATE TABLE IF NOT EXISTS items (
@@ -54,6 +55,23 @@ class Repository:
                     created_at TEXT NOT NULL,
                     UNIQUE(item_id, external_ref)
                 );
+                CREATE TABLE IF NOT EXISTS inspections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    inspection_date TEXT NOT NULL,
+                    handler TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK(status IN ({inspection_statuses})),
+                    conclusion TEXT,
+                    recheck_date TEXT,
+                    defer_reason TEXT,
+                    new_quantity REAL,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_inspections_pending
+                    ON inspections(item_id) WHERE status='pending';
                 CREATE TABLE IF NOT EXISTS audit_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     action TEXT NOT NULL,
@@ -156,6 +174,101 @@ class Repository:
                 (item_id,),
             ).fetchone()
         return int(row["n"])
+
+    def create_inspection(self, item_id: int, inspection_date: str, handler: str,
+                          actor: str) -> Dict[str, Any]:
+        now = utc_now()
+        self.get_item(item_id)
+        try:
+            with self._lock, self.conn:
+                cur = self.conn.execute(
+                    """INSERT INTO inspections(item_id, inspection_date, handler, status,
+                       created_by, created_at, updated_at) VALUES(?,?,?,'pending',?,?,?)""",
+                    (item_id, inspection_date, handler, actor, now, now),
+                )
+                inspection_id = int(cur.lastrowid)
+        except sqlite3.IntegrityError as exc:
+            raise ConflictError("已存在待办检查，请先完成或暂缓") from exc
+        return self.get_inspection(item_id, inspection_id)
+
+    def get_inspection(self, item_id: int, inspection_id: int) -> Dict[str, Any]:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM inspections WHERE id=? AND item_id=?",
+                (inspection_id, item_id),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("检查单不存在")
+        return dict(row)
+
+    def list_inspections(self, item_id: int) -> List[Dict[str, Any]]:
+        self.get_item(item_id)
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM inspections WHERE item_id=? ORDER BY id DESC", (item_id,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def latest_inspection(self, item_id: int) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM inspections WHERE item_id=? ORDER BY id DESC LIMIT 1",
+                (item_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def pending_inspection(self, item_id: int) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM inspections WHERE item_id=? AND status='pending'",
+                (item_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def complete_inspection(self, item_id: int, inspection_id: int, conclusion: str,
+                            new_quantity: Optional[float],
+                            return_state: Optional[str]) -> Dict[str, Any]:
+        now = utc_now()
+        with self._lock, self.conn:
+            cur = self.conn.execute(
+                """UPDATE inspections SET status='completed', conclusion=?, new_quantity=?,
+                   updated_at=? WHERE id=? AND item_id=? AND status='pending'""",
+                (conclusion, new_quantity, now, inspection_id, item_id),
+            )
+            if cur.rowcount == 0:
+                exists = self.conn.execute(
+                    "SELECT 1 FROM inspections WHERE id=? AND item_id=?",
+                    (inspection_id, item_id),
+                ).fetchone()
+                if exists is None:
+                    raise NotFoundError("检查单不存在")
+                raise ConflictError("检查已处理，不能重复完成")
+            if return_state is not None:
+                self.conn.execute(
+                    """UPDATE items SET status=?, quantity=?, version=version+1, updated_at=?
+                       WHERE id=?""",
+                    (return_state, new_quantity, now, item_id),
+                )
+        return self.get_inspection(item_id, inspection_id)
+
+    def defer_inspection(self, item_id: int, inspection_id: int, recheck_date: str,
+                         reason: str) -> Dict[str, Any]:
+        now = utc_now()
+        with self._lock, self.conn:
+            cur = self.conn.execute(
+                """UPDATE inspections SET status='deferred', recheck_date=?, defer_reason=?,
+                   updated_at=? WHERE id=? AND item_id=? AND status='pending'""",
+                (recheck_date, reason, now, inspection_id, item_id),
+            )
+            if cur.rowcount == 0:
+                exists = self.conn.execute(
+                    "SELECT 1 FROM inspections WHERE id=? AND item_id=?",
+                    (inspection_id, item_id),
+                ).fetchone()
+                if exists is None:
+                    raise NotFoundError("检查单不存在")
+                raise ConflictError("检查已处理，不能暂缓")
+        return self.get_inspection(item_id, inspection_id)
 
     def append_audit(self, action: str, entity_type: str, entity_id: int,
                      actor: str, detail: dict) -> Dict[str, Any]:

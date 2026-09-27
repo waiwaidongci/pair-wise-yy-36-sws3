@@ -12,8 +12,13 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(item["status"],STATES[0])
         self.service.add_record(item["id"],{"kind":"evidence","detail":"evidence registered","status":"closed","external_ref":"EV-1"},"recorder",'operator')
         current=item
-        for target in STATES[1:]:
+        for target in STATES[1:-1]:
             current=self.service.transition(current["id"],target,current["version"],"reviewer",TRANSITION_ROLES[target][0])
+        inspection=self.service.register_inspection(current["id"],{"inspection_date":"2026-09-27","handler":"检查员甲"},"inspector","compliance_officer")
+        self.service.complete_inspection(current["id"],inspection["id"],{"conclusion":"passed"},"inspector","compliance_officer")
+        current=self.service.get_item(current["id"],"viewer")
+        self.assertEqual(current["close_blockers"],[])
+        current=self.service.transition(current["id"],STATES[-1],current["version"],"chief",TRANSITION_ROLES[STATES[-1]][0])
         self.assertEqual(current["status"],STATES[-1])
         self.assertEqual(len(self.service.list_records(current["id"],"viewer")),1)
         events=self.service.audit("viewer",current["id"]); self.assertGreaterEqual(len(events),len(STATES)+1); self.assertTrue(self.repo.verify_audit_chain())

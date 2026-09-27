@@ -89,6 +89,11 @@ def make_handler(service: Service, static_dir: str):
                     actor, role = self._identity()
                     del actor
                     self._json(200, {"records": service.list_records(item_id, role)})
+                elif path.startswith("/api/items/") and path.endswith("/inspections"):
+                    item_id = int(path.split("/")[3])
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"inspections": service.list_inspections(item_id, role)})
                 elif path.startswith("/api/items/"):
                     item_id = int(path.rsplit("/", 1)[-1])
                     actor, role = self._identity()
@@ -113,6 +118,21 @@ def make_handler(service: Service, static_dir: str):
                 elif path.startswith("/api/items/") and path.endswith("/records"):
                     item_id = int(path.split("/")[3])
                     self._json(201, service.add_record(item_id, body, actor, role))
+                elif path.startswith("/api/items/") and path.endswith("/inspections"):
+                    item_id = int(path.split("/")[3])
+                    self._json(201, service.register_inspection(item_id, body, actor, role))
+                elif path.startswith("/api/items/") and "/inspections/" in path \
+                        and path.endswith("/complete"):
+                    parts = path.split("/")
+                    item_id, inspection_id = int(parts[3]), int(parts[5])
+                    self._json(200, service.complete_inspection(
+                        item_id, inspection_id, body, actor, role))
+                elif path.startswith("/api/items/") and "/inspections/" in path \
+                        and path.endswith("/defer"):
+                    parts = path.split("/")
+                    item_id, inspection_id = int(parts[3]), int(parts[5])
+                    self._json(200, service.defer_inspection(
+                        item_id, inspection_id, body, actor, role))
                 elif path.startswith("/api/items/") and path.endswith("/transition"):
                     item_id = int(path.split("/")[3])
                     target = body.get("target")
